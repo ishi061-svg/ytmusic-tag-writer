@@ -1,0 +1,5 @@
+ytmusicapi
+mutagen
+requests
+tkinterdnd2
+pillow
