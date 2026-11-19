@@ -2,6 +2,7 @@
 
 書き込むのは次のものだけ（ほかのタグには触らない）:
   - アルバム名          (ID3 の TALB)
+  - 曲名                (ID3 の TIT2、選んだときだけ)
   - アーティスト        (ID3 の TPE1)
   - アルバムアーティスト (ID3 の TPE2)
   - トラック番号        (ID3 の TRCK、「3/12」の形)
@@ -18,7 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from mutagen.id3 import APIC, ID3, ID3NoHeaderError, TALB, TPE1, TPE2, TRCK
+from mutagen.id3 import APIC, ID3, ID3NoHeaderError, TALB, TIT2, TPE1, TPE2, TRCK
 
 
 # ---------------------------------------------------------------- データの形
@@ -47,6 +48,7 @@ class FileRow:
     cur_album_artist: str
     cur_track: str
     cur_album: str = ""
+    cur_title: str = ""  # 曲名タグそのもの（空なら空）
     has_cover: bool = False
     track: Track | None = None
     how: str = ""        # 「曲名」「順番」「手動」「なし」
@@ -162,6 +164,7 @@ def read_folder(folder: Path) -> list[FileRow]:
             cur_album_artist=_text(tags, "TPE2"),
             cur_track=_text(tags, "TRCK"),
             cur_album=_text(tags, "TALB"),
+            cur_title=_text(tags, "TIT2"),
             has_cover=bool(tags and tags.getall("APIC")),
         ))
     return rows
@@ -243,7 +246,8 @@ def cover_action(row: FileRow, album: Album, embed: bool, replace: bool) -> str:
 
 
 def write_tags(rows: list[FileRow], album: Album,
-               embed_cover: bool = False, replace_cover: bool = False) -> int:
+               embed_cover: bool = False, replace_cover: bool = False,
+               write_title: bool = False) -> int:
     n = 0
     for r in rows:
         if not r.track:
@@ -258,6 +262,8 @@ def write_tags(rows: list[FileRow], album: Album,
         tags.setall("TRCK", [TRCK(encoding=3, text=[r.new_track_text])])
         if album.title:
             tags.setall("TALB", [TALB(encoding=3, text=[album.title])])
+        if write_title and r.track.title:
+            tags.setall("TIT2", [TIT2(encoding=3, text=[r.track.title])])
         if cover_action(r, album, embed_cover, replace_cover) != "そのまま":
             # type=3 は「表ジャケット」
             tags.setall("APIC", [APIC(encoding=3, mime=album.cover_mime, type=3,

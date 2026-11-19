@@ -56,7 +56,7 @@ class App(TkinterDnD.Tk):
     def __init__(self):
         super().__init__()
         self.title("YouTube Music タグ書き込み")
-        self.geometry("1300x600")
+        self.geometry("1450x600")
         if ICON.exists():
             self.iconbitmap(default=str(ICON))  # default= で確認画面などにも同じアイコン
         self.album: core.Album | None = None
@@ -90,6 +90,9 @@ class App(TkinterDnD.Tk):
         self.backup = tk.BooleanVar(value=saved.get("backup", True))
         ttk.Checkbutton(btns, text="書き込む前にバックアップを作る", variable=self.backup,
                         command=self.on_check).pack(side="left", padx=8)
+        self.title_on = tk.BooleanVar(value=saved.get("write_title", False))
+        ttk.Checkbutton(btns, text="曲名も書き込む", variable=self.title_on,
+                        command=self.on_check).pack(side="left", padx=8)
         self.embed = tk.BooleanVar(value=saved.get("embed_cover", True))
         ttk.Checkbutton(btns, text="ジャケットを埋め込む", variable=self.embed,
                         command=self.on_check).pack(side="left", padx=8)
@@ -101,11 +104,11 @@ class App(TkinterDnD.Tk):
                                        "（フォルダや MP3、ブラウザの URL は画面に落としても入ります）")
         ttk.Label(self, textvariable=self.info, padding=8).pack(fill="x")
 
-        cols = ("file", "how", "song", "album", "artist", "aartist", "track", "cover")
-        heads = ("ファイル名", "照合", "対応する曲（YouTube Music）", "アルバム名 今 → 新",
+        cols = ("file", "how", "song", "title", "album", "artist", "aartist", "track", "cover")
+        heads = ("ファイル名", "照合", "対応する曲（YouTube Music）", "曲名 今 → 新", "アルバム名 今 → 新",
                  "アーティスト 今 → 新", "アルバムアーティスト 今 → 新", "トラック番号 今 → 新",
                  "ジャケット")
-        widths = (180, 50, 180, 180, 180, 180, 100, 100)
+        widths = (170, 45, 170, 200, 150, 170, 170, 95, 95)
         frame = ttk.Frame(self, padding=(8, 0, 8, 8))
         frame.pack(fill="both", expand=True)
         self.tree = ttk.Treeview(frame, columns=cols, show="headings")
@@ -130,6 +133,7 @@ class App(TkinterDnD.Tk):
         """チェックを変えたら、すぐ覚えて、一覧も描き直す。"""
         save_settings({
             "backup": self.backup.get(),
+            "write_title": self.title_on.get(),
             "embed_cover": self.embed.get(),
             "replace_cover": self.replace.get(),
         })
@@ -223,14 +227,16 @@ class App(TkinterDnD.Tk):
             if r.track:
                 song = f"{r.track.number}. {r.track.title}"
                 act = core.cover_action(r, self.album, self.embed.get(), self.replace.get())
-                vals = (r.path.name, r.how, song,
+                cur_t = r.cur_title or "（空）"
+                title = f"{cur_t} → {r.track.title}" if self.title_on.get() else f"{cur_t}（そのまま）"
+                vals = (r.path.name, r.how, song, title,
                         f"{r.cur_album or '（空）'} → {self.album.title}",
                         f"{r.cur_artist or '（空）'} → {r.track.artist}",
                         f"{r.cur_album_artist or '（空）'} → {aa}",
                         f"{r.cur_track or '（空）'} → {r.new_track_text}",
                         f"{now} → {act}")
             else:
-                vals = (r.path.name, r.how, SKIP, "", "", "", "", f"{now} → そのまま")
+                vals = (r.path.name, r.how, SKIP, "", "", "", "", "", f"{now} → そのまま")
             tag = "order" if r.how == "順番" else ("none" if not r.track else "")
             self.tree.insert("", "end", iid=str(i), values=vals, tags=(tag,))
 
@@ -268,7 +274,10 @@ class App(TkinterDnD.Tk):
             return
         nums = [r.track.number for r in targets]
         dup = len(nums) != len(set(nums))
-        msg = f"{len(targets)}個の MP3 に、アルバム名・アーティスト・アルバムアーティスト・トラック番号を書き込みます。"
+        what = ("曲名・" if self.title_on.get() else "") + "アルバム名・アーティスト・アルバムアーティスト・トラック番号"
+        msg = f"{len(targets)}個の MP3 に、{what}を書き込みます。"
+        if not self.backup.get():
+            msg += "\n\n※ バックアップを作らない設定です。元に戻せません。"
         n_cover = sum(core.cover_action(r, self.album, self.embed.get(), self.replace.get()) != "そのまま"
                       for r in targets)
         if n_cover:
@@ -280,7 +289,8 @@ class App(TkinterDnD.Tk):
             return
         try:
             dest = core.backup(self.rows) if self.backup.get() else None
-            n = core.write_tags(self.rows, self.album, self.embed.get(), self.replace.get())
+            n = core.write_tags(self.rows, self.album, self.embed.get(), self.replace.get(),
+                                self.title_on.get())
         except Exception as e:
             messagebox.showerror("エラー", f"書き込みに失敗しました。\n{e}")
             return
