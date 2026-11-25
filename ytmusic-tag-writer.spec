@@ -2,7 +2,7 @@
 # exe を作る設定。作り方：python -m PyInstaller ytmusic-tag-writer.spec
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('icon.ico', '.')]
+datas = [('icon.ico', '.'), ('icon.png', '.')]  # icon.png は画面の左上の絵に使う
 binaries = []
 hiddenimports = []
 for pkg in ('tkinterdnd2', 'ytmusicapi'):   # ドラッグ＆ドロップの部品と、YouTube Music の部品を丸ごと入れる

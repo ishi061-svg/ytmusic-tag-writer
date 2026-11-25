@@ -19,9 +19,22 @@ from tkinter import filedialog, messagebox, ttk
 
 from tkinterdnd2 import DND_FILES, DND_TEXT, TkinterDnD  # ドラッグ＆ドロップを受け取るための追加の部品
 
+import check_images
 import core
 
 SKIP = "（書き込まない）"
+
+# ---- 色と文字（白基調＋赤。アイコンの赤とそろえる） ----
+RED = "#E2202C"
+RED_DARK = "#B8141F"
+RED_LIGHT = "#FDE8EA"
+BG = "#F5F5F7"        # 画面の地の色
+CARD = "#FFFFFF"      # カード（白い箱）の色
+BORDER = "#E3E3E8"
+TEXT = "#1D1D1F"
+SUB = "#6E6E73"       # 補足の文字
+YELLOW = "#FFF4D6"    # 並び順で当てはめた行
+FONT = "Yu Gothic UI"
 
 # exe にしたときは、同梱したファイルが一時フォルダ（_MEIPASS）に展開される
 HERE = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
@@ -56,78 +69,192 @@ class App(TkinterDnD.Tk):
     def __init__(self):
         super().__init__()
         self.title("YouTube Music タグ書き込み")
-        self.geometry("1450x600")
+        self.geometry("1560x780")
+        self.minsize(1100, 560)
+        self.configure(bg=BG)
         if ICON.exists():
             self.iconbitmap(default=str(ICON))  # default= で確認画面などにも同じアイコン
         self.album: core.Album | None = None
         self.rows: list[core.FileRow] = []
+        self.setup_style()
 
-        top = ttk.Frame(self, padding=8)
-        top.pack(fill="x")
+        # ---- 上の帯：アイコン＋題名 ----
+        head = ttk.Frame(self, style="Card.TFrame", padding=(20, 14))
+        head.pack(fill="x")
+        png = HERE / "icon.png"
+        if png.exists():
+            self.logo = tk.PhotoImage(file=str(png)).subsample(11)  # 512px → 約46px
+            ttk.Label(head, image=self.logo, style="Card.TLabel").pack(side="left", padx=(0, 14))
+        titles = ttk.Frame(head, style="Card.TFrame")
+        titles.pack(side="left")
+        ttk.Label(titles, text="YouTube Music タグ書き込み", style="Title.TLabel").pack(anchor="w")
+        ttk.Label(titles, text="アルバムの URL から、MP3 に曲の情報とジャケットをまとめて書き込みます",
+                  style="Sub.TLabel").pack(anchor="w")
+        tk.Frame(self, bg=BORDER, height=1).pack(fill="x")
 
-        ttk.Label(top, text="アルバムの URL").grid(row=0, column=0, sticky="w")
+        body = ttk.Frame(self, padding=(20, 16, 20, 12))
+        body.pack(fill="both", expand=True)
+
+        # ---- カード1：入れるもの ----
+        c1 = self.card(body, "1", "アルバムとフォルダ")
+        c1.columnconfigure(1, weight=1)
+        ttk.Label(c1, text="アルバムの URL", style="Field.TLabel").grid(row=0, column=0, sticky="w", pady=4)
         self.url = tk.StringVar()
-        ttk.Entry(top, textvariable=self.url, width=90).grid(row=0, column=1, columnspan=2, sticky="we", padx=4)
-
-        ttk.Label(top, text="言語").grid(row=0, column=3, sticky="e")
+        ttk.Entry(c1, textvariable=self.url).grid(row=0, column=1, sticky="we", padx=10, ipady=4)
+        lang_box = ttk.Frame(c1, style="Card.TFrame")
+        lang_box.grid(row=0, column=2, sticky="e")
+        ttk.Label(lang_box, text="言語", style="Field.TLabel").pack(side="left", padx=(0, 6))
         self.lang = tk.StringVar(value="日本語")
-        ttk.Combobox(top, textvariable=self.lang, values=["日本語", "英語"], width=6,
-                     state="readonly").grid(row=0, column=4, padx=4)
+        ttk.Combobox(lang_box, textvariable=self.lang, values=["日本語", "英語"], width=7,
+                     state="readonly").pack(side="left", ipady=3)
 
-        ttk.Label(top, text="MP3 のフォルダ").grid(row=1, column=0, sticky="w", pady=4)
+        ttk.Label(c1, text="MP3 のフォルダ", style="Field.TLabel").grid(row=1, column=0, sticky="w", pady=4)
         self.folder = tk.StringVar()
-        ttk.Entry(top, textvariable=self.folder, width=80).grid(row=1, column=1, sticky="we", padx=4)
-        ttk.Button(top, text="選ぶ…", command=self.pick_folder).grid(row=1, column=2, sticky="w")
-        top.columnconfigure(1, weight=1)
+        ttk.Entry(c1, textvariable=self.folder).grid(row=1, column=1, sticky="we", padx=10, ipady=4)
+        ttk.Button(c1, text="フォルダを選ぶ…", style="Ghost.TButton",
+                   command=self.pick_folder).grid(row=1, column=2, sticky="we")
+        ttk.Label(c1, text="フォルダや MP3、ブラウザの URL は、この画面にドラッグ＆ドロップしても入ります",
+                  style="Hint.TLabel").grid(row=2, column=1, columnspan=2, sticky="w", padx=10, pady=(2, 0))
 
-        btns = ttk.Frame(self, padding=(8, 0))
-        btns.pack(fill="x")
-        self.fetch_btn = ttk.Button(btns, text="① 取得して照合", command=self.fetch)
-        self.fetch_btn.pack(side="left")
-        self.write_btn = ttk.Button(btns, text="② 書き込む", command=self.write, state="disabled")
-        self.write_btn.pack(side="left", padx=8)
+        # ---- カード2：書き込む内容と実行ボタン ----
+        c2 = self.card(body, "2", "書き込む内容")
         saved = load_settings()
-        self.backup = tk.BooleanVar(value=saved.get("backup", True))
-        ttk.Checkbutton(btns, text="書き込む前にバックアップを作る", variable=self.backup,
-                        command=self.on_check).pack(side="left", padx=8)
         self.title_on = tk.BooleanVar(value=saved.get("write_title", False))
-        ttk.Checkbutton(btns, text="曲名も書き込む", variable=self.title_on,
-                        command=self.on_check).pack(side="left", padx=8)
         self.embed = tk.BooleanVar(value=saved.get("embed_cover", True))
-        ttk.Checkbutton(btns, text="ジャケットを埋め込む", variable=self.embed,
-                        command=self.on_check).pack(side="left", padx=8)
         self.replace = tk.BooleanVar(value=saved.get("replace_cover", False))
-        ttk.Checkbutton(btns, text="すでに入っているジャケットも置き換える", variable=self.replace,
-                        command=self.on_check).pack(side="left", padx=8)
+        self.backup = tk.BooleanVar(value=saved.get("backup", True))
+        checks = ttk.Frame(c2, style="Card.TFrame")
+        checks.pack(side="left", fill="x", expand=True)
+        ttk.Label(checks, text="いつも書き込む：アルバム名・アーティスト・アルバムアーティスト・トラック番号",
+                  style="Hint.TLabel").pack(anchor="w", pady=(0, 6))
+        row = ttk.Frame(checks, style="Card.TFrame")
+        row.pack(anchor="w")
+        for text, var in (("曲名も書き込む", self.title_on),
+                          ("ジャケットを埋め込む", self.embed),
+                          ("すでに入っているジャケットも置き換える", self.replace),
+                          ("書き込む前にバックアップを作る", self.backup)):
+            ttk.Checkbutton(row, text=" " + text, variable=var, command=self.on_check).pack(side="left", padx=(0, 24))
 
-        self.info = tk.StringVar(value="URL とフォルダを入れて「① 取得して照合」を押してください。"
-                                       "（フォルダや MP3、ブラウザの URL は画面に落としても入ります）")
-        ttk.Label(self, textvariable=self.info, padding=8).pack(fill="x")
+        actions = ttk.Frame(c2, style="Card.TFrame")
+        actions.pack(side="right")
+        self.fetch_btn = ttk.Button(actions, text="① 取得して照合", style="Ghost.TButton", command=self.fetch)
+        self.fetch_btn.pack(side="left", padx=(0, 10), ipadx=6)
+        self.write_btn = ttk.Button(actions, text="② 書き込む", style="Accent.TButton",
+                                    command=self.write, state="disabled")
+        self.write_btn.pack(side="left", ipadx=10)
 
+        # ---- お知らせの帯 ----
+        self.info = tk.StringVar(value="URL とフォルダを入れて「① 取得して照合」を押してください。")
+        ttk.Label(body, textvariable=self.info, style="Info.TLabel", padding=(14, 9)).pack(fill="x", pady=(0, 10))
+
+        # ---- 一覧 ----
         cols = ("file", "how", "song", "title", "album", "artist", "aartist", "track", "cover")
         heads = ("ファイル名", "照合", "対応する曲（YouTube Music）", "曲名 今 → 新", "アルバム名 今 → 新",
                  "アーティスト 今 → 新", "アルバムアーティスト 今 → 新", "トラック番号 今 → 新",
                  "ジャケット")
-        widths = (170, 45, 170, 200, 150, 170, 170, 95, 95)
-        frame = ttk.Frame(self, padding=(8, 0, 8, 8))
+        widths = (160, 45, 170, 210, 180, 220, 200, 100, 100)
+
+        # 下の説明は、一覧より先に「下側」に置く（一覧が伸びても隠れないように）
+        legend = ttk.Frame(body)
+        legend.pack(side="bottom", fill="x", pady=(8, 0))
+        tk.Label(legend, bg=YELLOW, width=2, relief="flat").pack(side="left", padx=(0, 6))
+        ttk.Label(legend, text="曲名で見つからず、並び順で当てはめた行。違っていたら行をダブルクリックして選び直せます",
+                  style="Legend.TLabel").pack(side="left")
+
+        frame = tk.Frame(body, bg=BORDER, padx=1, pady=1)  # 1px の枠線
         frame.pack(fill="both", expand=True)
         self.tree = ttk.Treeview(frame, columns=cols, show="headings")
         for c, h, w in zip(cols, heads, widths):
-            self.tree.heading(c, text=h)
+            self.tree.heading(c, text=h, anchor="w")
             self.tree.column(c, width=w, anchor="w")
         sb = ttk.Scrollbar(frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=sb.set)
         self.tree.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
-        self.tree.tag_configure("order", background="#fff4d6")
-        self.tree.tag_configure("none", foreground="#999999")
+        self.tree.tag_configure("even", background=CARD)
+        self.tree.tag_configure("odd", background="#FAFAFB")
+        self.tree.tag_configure("order", background=YELLOW)
+        self.tree.tag_configure("none", foreground="#A1A1A6")
         self.tree.bind("<Double-1>", self.edit_row)
 
-        ttk.Label(self, padding=(8, 0, 8, 8),
-                  text="黄色の行＝曲名で見つからず、並び順で当てはめた行です。違っていたら行をダブルクリックして選び直してください。"
-                  ).pack(fill="x")
-
         self.register_drop(self)
+
+    # ---- 見た目の設定 ----
+    def setup_style(self):
+        s = ttk.Style(self)
+        s.theme_use("clam")  # 色を自由に変えられる見た目の土台
+        base = (FONT, 10)
+        s.configure(".", font=base, background=BG, foreground=TEXT, bordercolor=BORDER,
+                    lightcolor=BORDER, darkcolor=BORDER, focuscolor=RED)
+        s.configure("TFrame", background=BG)
+        s.configure("Card.TFrame", background=CARD)
+        s.configure("Card.TLabel", background=CARD)
+        s.configure("Title.TLabel", background=CARD, font=(FONT, 16, "bold"))
+        s.configure("Sub.TLabel", background=CARD, foreground=SUB, font=(FONT, 10))
+        s.configure("CardTitle.TLabel", background=CARD, font=(FONT, 11, "bold"))
+        s.configure("Step.TLabel", background=RED, foreground="white", font=(FONT, 9, "bold"),
+                    anchor="center", width=2)
+        s.configure("Field.TLabel", background=CARD, foreground=TEXT)
+        s.configure("Hint.TLabel", background=CARD, foreground=SUB, font=(FONT, 9))
+        s.configure("Legend.TLabel", background=BG, foreground=SUB, font=(FONT, 9))
+        s.configure("Info.TLabel", background=RED_LIGHT, foreground=RED_DARK, font=(FONT, 10, "bold"))
+
+        s.configure("TEntry", fieldbackground=CARD, padding=6)
+        s.map("TEntry", bordercolor=[("focus", RED)], lightcolor=[("focus", RED)])
+        s.configure("TCombobox", fieldbackground=CARD, padding=4, arrowcolor=SUB)
+        s.map("TCombobox", fieldbackground=[("readonly", CARD)], bordercolor=[("focus", RED)],
+              selectbackground=[("readonly", CARD)], selectforeground=[("readonly", TEXT)])
+        self.option_add("*TCombobox*Listbox.selectBackground", RED)
+        self.option_add("*TCombobox*Listbox.font", base)
+
+        # チェックボックスは、赤い四角に白い ✓ の絵に差し替える
+        self.check_imgs = {k: tk.PhotoImage(data=getattr(check_images, k))
+                           for k in ("CHECK_ON", "CHECK_OFF", "CHECK_HOVER")}
+        if "RedCheck.indicator" not in s.element_names():
+            s.element_create("RedCheck.indicator", "image", self.check_imgs["CHECK_OFF"],
+                             ("selected", self.check_imgs["CHECK_ON"]),
+                             ("active", self.check_imgs["CHECK_HOVER"]), sticky="w")
+        s.layout("TCheckbutton", [("Checkbutton.padding", {"sticky": "nswe", "children": [
+            ("RedCheck.indicator", {"side": "left", "sticky": ""}),
+            ("Checkbutton.focus", {"side": "left", "sticky": "w", "children": [
+                ("Checkbutton.label", {"sticky": "nswe"})]})]})])
+        s.configure("TCheckbutton", background=CARD, padding=(0, 2), focuscolor=CARD)
+        s.map("TCheckbutton", background=[("active", CARD)])
+
+        s.configure("Accent.TButton", background=RED, foreground="white", bordercolor=RED,
+                    lightcolor=RED, darkcolor=RED, font=(FONT, 11, "bold"), padding=(14, 8))
+        s.map("Accent.TButton",
+              background=[("disabled", "#E8E8ED"), ("pressed", RED_DARK), ("active", RED_DARK)],
+              foreground=[("disabled", "#A1A1A6")],
+              bordercolor=[("disabled", "#E8E8ED")], lightcolor=[("disabled", "#E8E8ED")],
+              darkcolor=[("disabled", "#E8E8ED")])
+        s.configure("Ghost.TButton", background=CARD, foreground=RED, bordercolor=RED,
+                    lightcolor=CARD, darkcolor=CARD, font=(FONT, 10, "bold"), padding=(12, 7))
+        s.map("Ghost.TButton", background=[("pressed", RED_LIGHT), ("active", RED_LIGHT)],
+              foreground=[("disabled", "#A1A1A6")], bordercolor=[("disabled", BORDER)])
+
+        s.configure("Treeview", background=CARD, fieldbackground=CARD, rowheight=30,
+                    borderwidth=0, font=base)
+        s.map("Treeview", background=[("selected", RED_LIGHT)], foreground=[("selected", TEXT)])
+        s.configure("Treeview.Heading", background="#F0F0F3", foreground=SUB,
+                    font=(FONT, 9, "bold"), padding=(6, 6), relief="flat", borderwidth=0)
+        s.map("Treeview.Heading", background=[("active", "#E8E8ED")])
+        s.configure("Vertical.TScrollbar", background="#E0E0E5", troughcolor=CARD,
+                    bordercolor=CARD, arrowcolor=SUB, gripcount=0)
+
+    def card(self, parent, step, title):
+        """番号と見出しの付いた白い箱を作り、中身を入れる枠を返す。"""
+        outer = tk.Frame(parent, bg=BORDER, padx=1, pady=1)
+        outer.pack(fill="x", pady=(0, 12))
+        box = ttk.Frame(outer, style="Card.TFrame", padding=(18, 12, 18, 14))
+        box.pack(fill="x")
+        top = ttk.Frame(box, style="Card.TFrame")
+        top.pack(fill="x", pady=(0, 10))
+        ttk.Label(top, text=step, style="Step.TLabel").pack(side="left", padx=(0, 8), ipady=1)
+        ttk.Label(top, text=title, style="CardTitle.TLabel").pack(side="left")
+        inner = ttk.Frame(box, style="Card.TFrame")
+        inner.pack(fill="x")
+        return inner
 
     def on_check(self):
         """チェックを変えたら、すぐ覚えて、一覧も描き直す。"""
@@ -237,8 +364,12 @@ class App(TkinterDnD.Tk):
                         f"{now} → {act}")
             else:
                 vals = (r.path.name, r.how, SKIP, "", "", "", "", "", f"{now} → そのまま")
-            tag = "order" if r.how == "順番" else ("none" if not r.track else "")
-            self.tree.insert("", "end", iid=str(i), values=vals, tags=(tag,))
+            tags = ["odd" if i % 2 else "even"]  # 1行おきに薄い色で見やすく
+            if r.how == "順番":
+                tags.append("order")
+            elif not r.track:
+                tags.append("none")
+            self.tree.insert("", "end", iid=str(i), values=vals, tags=tags)
 
     def edit_row(self, _event):
         sel = self.tree.selection()
@@ -249,11 +380,15 @@ class App(TkinterDnD.Tk):
 
         win = tk.Toplevel(self)
         win.title("曲を選び直す")
+        win.configure(bg=CARD)
         win.transient(self)
         win.grab_set()
-        ttk.Label(win, text=f"ファイル：{r.path.name}", padding=8).pack(anchor="w")
+        ttk.Label(win, text="対応する曲を選び直す", style="CardTitle.TLabel",
+                  padding=(16, 14, 16, 2)).pack(anchor="w")
+        ttk.Label(win, text=f"ファイル：{r.path.name}", style="Hint.TLabel",
+                  padding=(16, 0, 16, 10)).pack(anchor="w")
         var = tk.StringVar(value=f"{r.track.number}. {r.track.title}" if r.track else SKIP)
-        ttk.Combobox(win, textvariable=var, values=choices, width=60, state="readonly").pack(padx=8)
+        ttk.Combobox(win, textvariable=var, values=choices, width=60, state="readonly").pack(padx=16, ipady=3)
 
         def ok():
             v = var.get()
@@ -265,7 +400,7 @@ class App(TkinterDnD.Tk):
             self.refresh()
             win.destroy()
 
-        ttk.Button(win, text="決定", command=ok).pack(pady=8)
+        ttk.Button(win, text="決定", style="Accent.TButton", command=ok).pack(pady=14)
 
     def write(self):
         targets = [r for r in self.rows if r.track]
